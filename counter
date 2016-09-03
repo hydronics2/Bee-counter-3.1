@@ -1,0 +1,288 @@
+/*
+  counter_
+  Benjamin Foote and Thomas Hudson
+  May 8th 2015
+  
+  BeeCounter project
+ 
+   6/10/2015 - changed IP address, updated code for IN/OUT counting
+   9/3/2016 - posted on github
+ */
+ 
+
+#include <TimerOne.h>
+#define LED 13
+
+#define NUMBER_OF_SHIFT_CHIPS   3
+#define DATA_WIDTH   NUMBER_OF_SHIFT_CHIPS * 8
+#define PULSE_WIDTH_USEC   5
+#define POLL_DELAY_MSEC   1
+#define BYTES_VAL_T unsigned long  //change to long if number_of_shift_chips is higher than 2
+
+
+
+//-----------------------------------------BEE COUNTING variables
+
+int ploadPin        = 5;  // ORANGE - Connects to /PL aka Parallel load aka latch pin the 165
+int dataPin         = 6; // BLUE - Connects to the Q7 aka MISO pin the 165
+int clockPin        = 7; // GREEN - Connects to the Clock pin the 165
+
+BYTES_VAL_T pinValues;
+BYTES_VAL_T lastPinValues;
+ 
+const int numberOfGates = 12; // 12 gates, 24 sensors
+const int startGate = 0;  //useful for testing
+const int endGate = 12;   //useful for testing
+const int debeebounce = 120;
+const int outputDelay = 15000;  //prints bee counts every 15 seconds
+unsigned long lastOutput = 0;
+unsigned long currentTime = 0;
+
+int inPin[numberOfGates];
+int outPin[numberOfGates];
+
+int inCount[numberOfGates];
+int outCount[numberOfGates];
+
+int inReading[numberOfGates];
+int outReading[numberOfGates];
+
+int lastInReading[numberOfGates];
+int lastOutReading[numberOfGates];
+
+  
+ unsigned long inReadingTime[numberOfGates];
+ unsigned long outReadingTime[numberOfGates];
+ 
+ unsigned long lastInReadingTime[numberOfGates];
+ unsigned long lastOutReadingTime[numberOfGates];
+  
+int inReadingTimeHigh[numberOfGates];
+int outReadingTimeHigh[numberOfGates];
+
+
+int lastInTime[numberOfGates];
+int lastOutTime[numberOfGates];
+
+int inReadingTimeComparator[numberOfGates];
+int outReadingTimeComparator[numberOfGates];
+
+int lastInReadingTimeHigh[numberOfGates];
+int lastOutReadingTimeHigh[numberOfGates];
+
+int totalTimeTravelGoingOut[numberOfGates];
+int totalTimeTravelGoingIn[numberOfGates];
+
+int firstTestInVariable[numberOfGates];
+
+
+int firstTestOutVariable[numberOfGates];
+
+
+int inTotal;
+int outTotal;
+
+int j = 0;
+
+int n = 0;
+
+
+/* This function is essentially a "shift-in" routine reading the
+ * serial Data from the shift register chips and representing
+ * the state of those pins in an unsigned integer (or long).
+*/
+BYTES_VAL_T read_shift_regs()
+{
+    long bitVal;
+    BYTES_VAL_T bytesVal = 0;
+
+    /* Trigger a parallel Load to latch the state of the data lines,
+    */
+   
+    digitalWrite(ploadPin, LOW);
+    delayMicroseconds(PULSE_WIDTH_USEC);
+    digitalWrite(ploadPin, HIGH);
+
+    /* Loop to read each bit value from the serial out line
+     * of the SN74HC165N.
+    */
+    for(int i = 0; i < DATA_WIDTH; i++)
+    {
+        bitVal = digitalRead(dataPin);
+
+        /* Set the corresponding bit in bytesVal.
+        */
+        bytesVal |= (bitVal << ((DATA_WIDTH-1) - i));
+
+        /* Pulse the Clock (rising edge shifts the next bit).
+        */
+        digitalWrite(clockPin, HIGH);
+        delayMicroseconds(PULSE_WIDTH_USEC);
+        digitalWrite(clockPin, LOW);
+    }
+
+    return(bytesVal);
+}
+
+
+
+
+void pinValuesToGates()
+{
+  j = 0;
+    for(int i = 0; i < DATA_WIDTH; i++)
+    {
+        if((pinValues >> i) & 1)
+            outReading[j] = 1;
+        else
+            outReading[j] = LOW;
+    i++;
+        if((pinValues >> i) & 1)
+            inReading[j] = 1;
+        else
+            inReading[j] = LOW;
+        
+        j++;  
+        }
+
+}
+
+void printGates() {
+  
+for(int i = 0; i < numberOfGates; i++){
+Serial.print("outReading ");
+Serial.print(i);
+Serial.print(": ");
+Serial.println(outReading[i]);
+Serial.print(" inReading ");
+Serial.print(i);
+Serial.print(": ");
+Serial.println(inReading[i]);
+}
+Serial.println("");
+} 
+
+
+void setup() {
+  Serial.begin(115200);
+ 
+    pinMode(ploadPin, OUTPUT);
+    pinMode(clockPin, OUTPUT);
+    pinMode(dataPin, INPUT);
+
+    digitalWrite(clockPin, LOW);
+    digitalWrite(ploadPin, HIGH);
+    /* Read in and display the pin states at startup.
+    */
+    Serial.println("testing at startup");
+    delay(1000);
+    pinValues = read_shift_regs();
+    pinValuesToGates();
+    printGates(); 
+    lastPinValues = pinValues;
+   
+}
+
+void loop() {
+
+  
+  currentTime = millis();  
+                    
+  /* Read the state of all sensors.*/
+  pinValues = read_shift_regs();
+    
+
+    /* If there was a chage in state, display which ones changed.
+    */
+  if(pinValues != lastPinValues) {
+    //printGates();
+    //printGates();
+    pinValuesToGates();
+    lastPinValues = pinValues; 
+    for (int i = startGate; i < endGate; i++) {
+      // has anything changed going IN?
+      if(inReading[i] != lastInReading[i]) {  //change of state
+        if(currentTime - inReadingTime[i] > debeebounce){  //deebounce sensor 120ms
+          //Serial.print(i);
+          //Serial.print(", high_or_low: ");
+          //Serial.print(inReading[i]);
+          if(inReading[i] == 0){  //a bee just left the sensor; that is, it was HIGH, now it is LOW (empty)
+            lastInReadingTime[i] = currentTime;            
+            //Serial.print("_ IN sensor HIGH for: ");
+            //Serial.print(currentTime - inReadingTime[i]);
+            //Serial.print(", current time: ");
+            //Serial.println(currentTime);  
+            inReadingTimeHigh[i] = currentTime - inReadingTime[i]; //this variable is how long the bee was present for
+            if(currentTime - lastOutReadingTime[i] < 150){  //this variable indicates that the leading edge of the outside sensor was just triggered... indicating the bees movement is in the out direction
+              if(inReadingTimeHigh[i] < 350 || outReadingTimeHigh[i] < 350){ ///if all these things are true... a bee has left, count it. any longer times indicates not sure which way the bee is really headed
+                outCount[i]++;
+                outTotal++; 
+                //Serial.println("");
+                //Serial.print("OUT: ");
+                //Serial.println(outTotal);
+              }
+            }
+          }
+          if(inReading[i] == 1){
+            //Serial.print("_ IN sensor LOW for: ");
+            //Serial.print(currentTime - inReadingTime[i]);
+            //Serial.print(", current time: ");
+            //Serial.println(currentTime);
+          }  
+        }
+        inReadingTime[i] = currentTime;
+        lastInReading[i] = inReading[i];
+      }
+      // has anything changed going OUT
+      if(outReading[i] != lastOutReading[i]) {
+        if(currentTime - outReadingTime[i] > debeebounce){ //deebounce sensor
+          //Serial.print(i);
+          //Serial.print(", high_or_low: ");
+          //Serial.print(outReading[i]);
+          if(outReading[i] == 0){
+            lastOutReadingTime[i] = currentTime;
+            //Serial.print("_OUT sensor HIGH for: ");
+            //Serial.print(currentTime - outReadingTime[i]);
+            //Serial.print(", current time: ");
+            //Serial.println(currentTime);
+            outReadingTimeHigh[i] = currentTime - outReadingTime[i];
+            if(currentTime - lastInReadingTime[i] < 150){
+              if(inReadingTimeHigh[i] < 350 || outReadingTimeHigh[i] < 350){   ///if all these things are true... a bee has entered, count it
+                inCount[i]++;
+                inTotal++;
+                //Serial.println("");
+                //Serial.print("in: ");
+                //Serial.println(inTotal); 
+              }
+            }
+          }
+          if(outReading[i] == 1){
+            //Serial.print("_OUT sensor LOW for: ");
+            //Serial.print(currentTime - outReadingTime[i]);
+            //Serial.print(", current time: ");
+            //Serial.println(currentTime);
+          }
+        }
+        outReadingTime[i] = currentTime;
+        lastOutReading[i] = outReading[i];
+      }
+    }
+  }
+
+  if (currentTime - lastOutput > outputDelay) {
+    Serial.println("sending data");
+    sendData(); 
+    lastOutput = currentTime; 
+    inTotal = 0;
+    outTotal = 0; 
+  }
+}
+      
+
+void sendData() {
+  Serial.print("OUT: ");
+  Serial.println(outTotal);
+  Serial.print("in: ");
+  Serial.println(inTotal);
+// over wifi or ethernet or serial
+}
